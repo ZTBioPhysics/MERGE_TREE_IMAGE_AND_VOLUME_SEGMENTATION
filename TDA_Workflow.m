@@ -15,7 +15,6 @@ end
 
 %% or load test image
 
-% I = imread('testimage.png','PNG');
 dim2 = 1;
 I = imread('pears.png');
 I = rgb2gray(I);
@@ -44,8 +43,7 @@ ST = max(max(max(I)));
 % determine the number of steps in the filtration
 steps = 100;
 
-% % Automatically determines noise threshold based on CC vs Threshold plot
-% % comment out this if you want the filtration to span the entire range
+% % Automatically determine the final threshold based on connected components (0th Betti Number) vs Threshold plot
 % NT = find_noise_threshold(I,steps); 
 
 % Create threshold vector
@@ -59,7 +57,7 @@ end
 [NUMCC, CC, THRESH, aug_merge_tree, DG] = create_aug_merge_tree(I, thresh);
 plot_aug_merge_tree(DG)
 
-% Plot # of CC vs threshold
+% Plot # of connected components vs threshold
 numCC = NUMCC(:,1);
 figure();
 plot(thresh, numCC);
@@ -69,9 +67,11 @@ ylabel('0th Betti Number')
 set(gca, 'YScale', 'log')
 
 %% Generate and plot the merge tree
-% Compresses all the branches of the augmented merge tree. Result is a new
-% digraph/adj matrix where nodes are all Births and Mergers (and root) and
-% weights equal to the function span between the two nodes
+% Compresses branches of the augmented merge tree by removing all nodes 
+% with ID and OD = 1. These nodes represent topological features that
+% are not changing. Each branch is replaced by a weighted edge equal to the
+% function span between the birth and merge node.
+
 [DG2, THRESH2, PIXID] = compress_aug_merge_tree(DG, THRESH, NUMCC, CC, thresh);
 plot_merge_tree(DG2, THRESH2)
 
@@ -91,7 +91,7 @@ toplot = 1; % boolean flag if you want to plot the distribution
 toplot = 1; % boolean flag if you want to plot the persistence curve
 [~] = calculate_and_plot_persistence_curve(PLs, toplot);
 
-% Stability analysis
+% Perform "stability analysis"
 [~, ~] = stability_analysis(branches, THRESH2, PLs);
 
 % Calculate and plot the persistence diagram
@@ -109,7 +109,7 @@ if strcmpi(simplify_button, 'yes')
     prompt = {'Enter persistence length cutoff:'};
     dlgtitle = 'Persistence Length Cutoff';
     dims = [1 35];
-    definput = {'0.5'}; 
+    definput = {'0.1'}; 
     persistence_cutoff = str2double(inputdlg(prompt, dlgtitle, dims, definput));
 
     % Perform persistence-based simplification using the specified cutoff
@@ -134,7 +134,7 @@ else
     PIXID2 = PIXID;
 end
 
-%% Hierarchical segmentation based on simplified merge tree
+%% Hierarchical segmentation of 2D image based on simplified merge tree
 
 % segment the image based on the nodes of the simplified merge tree
 toplot = 1; % boolean flag if you want to iteratively plot
@@ -150,7 +150,7 @@ if toplot == 0
     end
 end
 
-%% segmentation by persistence pairs
+%% segment 2D image by persistence pairs
 
 % segment the image by persistence pairs
 toplot = 1; % boolean flag if you want to iteratively plot
@@ -243,8 +243,8 @@ title('Distance Histogram');
 % % calculate average and total connectivity of each column
 % calculate_and_plot_avg_and_total_connectivity(AffMat)
 
-% hard cutoff on Distmat?
-DistMat(DistMat>200)=0;
+% % hard cutoff on Distmat?
+% DistMat(DistMat>200)=0;
 
 %% rescale the affinity and distance matrices
 
@@ -304,7 +304,7 @@ AggMat = Rescaled_DistMat.*Rescaled_AffMat;
 % AggMat = Rescaled_AffMat;
 % AggMat = Rescaled_DistMat;
 
-%% Cluster nodes in the merge tree using the AffMat
+%% Cluster nodes in the merge tree using the aggregate matrix
 % Cluster nodes of the merge tree using graph community detection algorithms
 % such as modularity maximization or spectral clustering.
 
@@ -313,11 +313,11 @@ AggMat = Rescaled_DistMat.*Rescaled_AffMat;
         'Algorithm', 'ModMax', 'Spectral', 'Spectral');
 if strcmp(algo_type, 'Spectral')
     % spectral clustering.
-    VV = cluster_nodes_spectral(AggMat);
-    max(VV) % number of clusters
+    clusters = cluster_nodes_spectral(AggMat);
+    max(clusters) % number of clusters
 else
-    VV = GCModulMax1(AggMat);
-    max(VV) % number of clusters
+    clusters = GCModulMax1(AggMat);
+    max(clusters) % number of clusters
 end
 
 % Plot merge tree with nodes colored by cluster id.
@@ -331,13 +331,13 @@ if type_idx == 1
     Births = find(ID==0); 
     CID = zeros(1,numnodes(DG3)); % cluster ID for each leaf node
     for n = 1:length(Births)
-        CID(Births(n)) = VV(n);
+        CID(Births(n)) = clusters(n);
     end
 elseif type_idx == 2
     UCCS = find(or(ID==0,ID>1));    
     CID = zeros(1,numnodes(DG3)); % cluster ID for each leaf node
     for n = 1:length(UCCS)
-        CID(UCCS(n)) = VV(n);
+        CID(UCCS(n)) = clusters(n);
     end
 end
 
@@ -345,25 +345,25 @@ CLUSTERS1 = CID;
 p.NodeCData = CLUSTERS1;
 cbh = colorbar;
 
+% Plot the AggMat as a graph/network and color nodes by cluster_id
 network = graph(AggMat);
 figure();
 LWidths = 5*network.Edges.Weight/max(network.Edges.Weight);
 p=plot(network,'Layout','force','LineWidth',LWidths,'MarkerSize',5);
-p.NodeCData = VV;
+p.NodeCData = clusters;
 colorbar;
 
-%% segment by cluster
+%% segment 2D image by cluster
 
 % expand each cluster upwards through the tree such that merge nodes whos
-% subtree leaf nodes all have the same cluster_id are assinged to the same
-% cluster when possible
+% subtree has all the same cluster_id are assinged to the same cluster
 
 if type_idx == 1
     toplot = 0;
-    [CLUSTERS, MIN_CLUSTERS] = expand_merge_tree_clusters(DG3, VV, toplot);
+    [CLUSTERS, MIN_CLUSTERS] = expand_merge_tree_clusters(DG3, clusters, toplot);
 end
 
-% input can take MIN_CLUSTERS if used expand_merge_tree above, or CLUSTERS1
+% input can take MIN_CLUSTERS if expand_merge_tree was used, or CLUSTERS1
 % from previous section
 toplot = 1; % 1 if you want to plot results iteratively, 0 if not
 [Lab] = segment_by_cluster(I, PIXID2, MIN_CLUSTERS, DG3, toplot);
